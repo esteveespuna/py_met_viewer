@@ -7,40 +7,41 @@ A graphical tool for visualizing and comparing espresso shot data from `.shot.js
 - **Load and visualize shot data**: View pressure, flow, weight, temperature sensors, and more
 - **Compare two shots**: Overlay two shots side-by-side with different line styles
 - **Customizable data series**: Select which metrics to display from categorized checkboxes
-- **Secondary Y-axis**: Plot any series on a secondary axis for better scale comparison
+- **Secondary Y-axis**: Plot any series on a secondary axis with aligned zero lines
 - **Line style customization**: Change color, line style (solid/dashed/dotted), and thickness for each series
 - **Trim data**: Adjust the duration of each shot to focus on specific time ranges
+- **Hover values**: See values for all plotted series at the cursor position with colored indicators
+- **Save/Load sessions**: Save your configuration and reload it later
 - **Export to PNG**: Save high-resolution plots for sharing or documentation
 - **Auto-load recent files**: Automatically loads the 2 most recent `.shot.json` files on startup
 
 ## Requirements
 
 - Python 3.8+
-- wxPython
-- matplotlib
+- wxPython 4.0+
+- matplotlib 3.0+
 
 ## Installation
 
 ```bash
-# Install dependencies
 pip install wxPython matplotlib
-
-# Clone the repository
-git clone git@github.com:esteveespuna/py_met_viewer.git
-cd py_met_viewer
-
-# Run the viewer
-python3 shot_viewer.py
 ```
 
 ## Usage
 
-### Basic Usage
+### Running the Application
 
-1. Run `python3 shot_viewer.py`
-2. The app auto-loads the 2 most recent `.shot.json` files from the current directory
-3. Select data series to plot using checkboxes in the left panel
-4. Use quick select buttons: **All**, **None**, **Shot**, **Temps**
+```bash
+python3 shot_viewer.py
+```
+
+The app auto-loads the 2 most recent `.shot.json` files from the current directory.
+
+### Selecting Data Series
+
+- Use checkboxes in the left panel to select which data series to plot
+- Quick select buttons: **All**, **None**, **Shot**, **Temps**
+- Check **2nd** to plot a series on the secondary Y-axis
 
 ### Comparing Shots
 
@@ -50,20 +51,36 @@ python3 shot_viewer.py
 
 ### Customizing Appearance
 
-- Click the **⚙** button next to any data series to customize:
-  - Color (preset or custom color picker)
-  - Line style (solid, dashed, dotted, dash-dot)
-  - Line width
-- Check **2nd** to plot a series on the secondary Y-axis
+Click the **⚙** button next to any data series to customize:
+- Color (preset colors or custom color picker)
+- Line style (solid, dashed, dotted, dash-dot)
+- Line width (0.5 - 5.0)
 
 ### Trimming Data
 
-- Click the **⚙** button next to each file to adjust:
-  - Trim duration to show only part of the shot
+Click the **⚙** button next to each file to adjust the trim duration and show only part of the shot.
+
+### Hover Values
+
+Move your mouse over the plot to see values for all plotted series at that time point. The hover panel shows:
+- Colored squares matching each line
+- Values with units
+- In compare mode: values from both shots side by side
+- Related series are grouped together (e.g., Pressure next to Pressure Setpoint)
+
+### Save/Load Sessions
+
+- **Save Session**: Saves your current configuration to a `.session.json` file:
+  - Loaded shot files
+  - Trim settings
+  - Selected data series and secondary axis settings
+  - Line styles (colors, line types, widths)
+  - Compare mode state
+- **Load Session**: Restores a previously saved configuration
 
 ### Exporting
 
-- Click **Export PNG** to save the current plot as a high-resolution image
+Click **Export PNG** to save the current plot as a high-resolution image (200 DPI).
 
 ## Data Format
 
@@ -80,11 +97,16 @@ The viewer expects `.shot.json` files with the following structure:
         "pressure": 0.0,
         "flow": 0.0,
         "weight": 0.0,
-        "setpoints": { ... }
+        "setpoints": {
+          "pressure": 0.0,
+          "flow": 0.0,
+          "power": 0.0
+        }
       },
       "sensors": {
         "motor_speed": 0.0,
         "motor_power": 0.0,
+        "motor_temp": 0.0,
         ...
       }
     }
@@ -92,18 +114,6 @@ The viewer expects `.shot.json` files with the following structure:
 }
 ```
 
-## Command Line Tool
-
-A simple command-line plotting tool is also included:
-
-```bash
-python3 plot_met.py path/to/shot.json -o output.png
-```
-
 ## License
 
 MIT License
-
-## Contributing
-
-Contributions are welcome! Please open an issue or submit a pull request.
