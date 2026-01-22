@@ -211,9 +211,12 @@ class FileSettingsDialog(wx.Dialog):
         dur_sizer = wx.BoxSizer(wx.HORIZONTAL)
         dur_sizer.Add(wx.StaticText(panel, label="Trim to duration (s):"), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 10)
 
-        self.duration_ctrl = wx.SpinCtrlDouble(panel, min=0.1, max=self.max_duration, inc=0.5, size=(120, -1))
+        # Clamp initial value to valid range to avoid GTK errors
+        initial_value = self.result_settings.get("trim_duration", self.max_duration)
+        initial_value = max(0.1, min(initial_value, self.max_duration))
+        self.duration_ctrl = wx.SpinCtrlDouble(panel, min=0.1, max=self.max_duration,
+                                                initial=initial_value, inc=0.5, size=(120, -1))
         self.duration_ctrl.SetDigits(2)
-        self.duration_ctrl.SetValue(self.result_settings.get("trim_duration", self.max_duration))
         self.duration_ctrl.Bind(wx.EVT_SPINCTRLDOUBLE, self._on_duration_change)
         dur_sizer.Add(self.duration_ctrl, 0, wx.ALIGN_CENTER_VERTICAL)
 
