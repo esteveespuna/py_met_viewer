@@ -1072,9 +1072,41 @@ class ShotViewerFrame(wx.Frame):
             """Create an HTML colored square."""
             return f'<span style="background-color: {hex_color}; border: 1px solid #333;">&nbsp;&nbsp;</span>'
 
-        # Build items list
+        # Define pairings: data point key -> setpoint key
+        PAIRINGS = {
+            "shot.pressure": "shot.setpoints.pressure",
+            "shot.flow": "shot.setpoints.flow",
+            "sensors.motor_power": "shot.setpoints.power",
+        }
+        # Reverse mapping
+        REVERSE_PAIRINGS = {v: k for k, v in PAIRINGS.items()}
+
+        def order_fields(fields):
+            """Order fields so that data points are next to their setpoints."""
+            field_dict = {f[0]: f for f in fields}  # key -> (key, name, unit, color)
+            ordered = []
+            used = set()
+
+            for key, name, unit, hex_color in fields:
+                if key in used:
+                    continue
+
+                # Add this field
+                ordered.append((key, name, unit, hex_color))
+                used.add(key)
+
+                # Check if there's a paired field to add next
+                paired_key = PAIRINGS.get(key) or REVERSE_PAIRINGS.get(key)
+                if paired_key and paired_key in field_dict and paired_key not in used:
+                    ordered.append(field_dict[paired_key])
+                    used.add(paired_key)
+
+            return ordered
+
+        # Build items list with ordered fields
         items = []
         is_compare = self.plot_data.get("compare")
+        ordered_fields = order_fields(self.plot_data["fields"])
 
         if is_compare:
             # Compare mode: show values from both shots
@@ -1083,7 +1115,7 @@ class ShotViewerFrame(wx.Frame):
             s1_name = self.plot_data["shot1_name"]
             s2_name = self.plot_data["shot2_name"]
 
-            for key, name, unit, hex_color in self.plot_data["fields"]:
+            for key, name, unit, hex_color in ordered_fields:
                 val1 = self.plot_data["series1"][key][idx1] if idx1 is not None and idx1 < len(self.plot_data["series1"][key]) else None
                 val2 = self.plot_data["series2"][key][idx2] if idx2 is not None and idx2 < len(self.plot_data["series2"][key]) else None
                 items.append(
@@ -1094,7 +1126,7 @@ class ShotViewerFrame(wx.Frame):
             # Single shot mode
             idx = find_nearest_idx(self.plot_data["time"], x)
             if idx is not None:
-                for key, name, unit, hex_color in self.plot_data["fields"]:
+                for key, name, unit, hex_color in ordered_fields:
                     series = self.plot_data["series"][key]
                     val = series[idx] if idx < len(series) else None
                     items.append(f"{color_square(hex_color)} <b>{name}:</b> {format_value(val, unit)}")
