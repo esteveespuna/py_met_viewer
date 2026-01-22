@@ -30,6 +30,37 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 
+def _align_yaxis_zero(ax1, ax2):
+    """
+    Adjust y-axis limits of ax1 and ax2 so that zero appears at the same
+    vertical position on both axes.
+    """
+    y1_min, y1_max = ax1.get_ylim()
+    y2_min, y2_max = ax2.get_ylim()
+
+    # Ensure zero is included in both axes
+    y1_min, y1_max = min(y1_min, 0), max(y1_max, 0)
+    y2_min, y2_max = min(y2_min, 0), max(y2_max, 0)
+
+    # Handle edge cases
+    if y1_max == 0 and y2_max == 0:
+        return
+    if y1_min == 0 and y2_min == 0:
+        return
+
+    # Calculate negative/positive ratios
+    ratio1 = -y1_min / y1_max if y1_max > 0 else float('inf')
+    ratio2 = -y2_min / y2_max if y2_max > 0 else float('inf')
+
+    # Use the larger ratio for both
+    target_ratio = max(ratio1, ratio2)
+
+    if y1_max > 0:
+        ax1.set_ylim(-target_ratio * y1_max, y1_max)
+    if y2_max > 0:
+        ax2.set_ylim(-target_ratio * y2_max, y2_max)
+
+
 def _safe_get(d: Dict[str, Any], path: List[str], default=float("nan")):
     cur: Any = d
     for k in path:
@@ -162,6 +193,7 @@ def plot_shot(
     if include_motor_power_goal:
         ax2.plot(x, series["goal_power"], label="Motor power goal (setpoint)", linestyle=":", linewidth=2)
     ax2.set_ylabel("Motor power")
+    _align_yaxis_zero(ax1, ax2)
 
     # Legend combined
     lines1, labels1 = ax1.get_legend_handles_labels()

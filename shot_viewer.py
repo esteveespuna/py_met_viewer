@@ -26,6 +26,44 @@ from matplotlib.backends.backend_wxagg import NavigationToolbar2WxAgg as Navigat
 from matplotlib.figure import Figure
 
 
+def align_yaxis_zero(ax1, ax2):
+    """
+    Adjust y-axis limits of ax1 and ax2 so that zero appears at the same
+    vertical position on both axes.
+    """
+    y1_min, y1_max = ax1.get_ylim()
+    y2_min, y2_max = ax2.get_ylim()
+
+    # Ensure zero is included in both axes
+    y1_min, y1_max = min(y1_min, 0), max(y1_max, 0)
+    y2_min, y2_max = min(y2_min, 0), max(y2_max, 0)
+
+    # Handle edge cases
+    if y1_max == 0 and y2_max == 0:
+        # Both entirely negative, zero is at top
+        return
+    if y1_min == 0 and y2_min == 0:
+        # Both entirely positive, zero is at bottom
+        return
+
+    # Calculate negative/positive ratios
+    ratio1 = -y1_min / y1_max if y1_max > 0 else float('inf')
+    ratio2 = -y2_min / y2_max if y2_max > 0 else float('inf')
+
+    # Use the larger ratio for both (so neither axis clips data)
+    target_ratio = max(ratio1, ratio2)
+
+    # Apply to ax1
+    if y1_max > 0:
+        new_y1_min = -target_ratio * y1_max
+        ax1.set_ylim(new_y1_min, y1_max)
+
+    # Apply to ax2
+    if y2_max > 0:
+        new_y2_min = -target_ratio * y2_max
+        ax2.set_ylim(new_y2_min, y2_max)
+
+
 # Data field definitions: (path, display_name, category, unit)
 DATA_FIELDS = [
     # Shot data
@@ -154,7 +192,8 @@ class FileSettingsDialog(wx.Dialog):
         self.saved = False
 
         # Calculate default duration (last time - first time)
-        self.max_duration = shot_data.time_s[-1] if shot_data.time_s else 0
+        # Ensure max_duration is at least 0.1 to avoid GTK SpinCtrl assertion errors
+        self.max_duration = max(0.1, shot_data.time_s[-1] if shot_data.time_s else 0.1)
         self.result_settings = current_settings.copy() if current_settings else {}
 
         if "trim_duration" not in self.result_settings:
@@ -443,6 +482,16 @@ class ShotViewerFrame(wx.Frame):
         # Left panel: controls
         left_panel = wx.Panel(splitter)
         left_sizer = wx.BoxSizer(wx.VERTICAL)
+
+        # Session save/load section
+        session_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        btn_save_session = wx.Button(left_panel, label="Save Session", size=(100, -1))
+        btn_save_session.Bind(wx.EVT_BUTTON, lambda e: self._save_session())
+        session_sizer.Add(btn_save_session, 1, wx.RIGHT, 5)
+        btn_load_session = wx.Button(left_panel, label="Load Session", size=(100, -1))
+        btn_load_session.Bind(wx.EVT_BUTTON, lambda e: self._load_session())
+        session_sizer.Add(btn_load_session, 1)
+        left_sizer.Add(session_sizer, 0, wx.EXPAND | wx.ALL, 5)
 
         # File loading section
         file_box = wx.StaticBox(left_panel, label="Files")
@@ -897,6 +946,7 @@ class ShotViewerFrame(wx.Frame):
 
         if ax2:
             ax2.set_ylabel("Secondary Axis")
+            align_yaxis_zero(self.ax, ax2)
 
         # Combined legend at bottom
         lines1, labels1 = self.ax.get_legend_handles_labels()
@@ -936,6 +986,117 @@ class ShotViewerFrame(wx.Frame):
 
         self.fig.savefig(path, dpi=200, bbox_inches="tight")
         wx.MessageBox(f"Saved to:\n{path}", "Export", wx.OK | wx.ICON_INFORMATION)
+
+    def _save_session(self):
+        """Save current session configuration to a JSON file."""
+        with wx.FileDialog(
+            self,
+            "Save Session",
+            wildcard="Session files (*.session.json)|*.session.json",
+            defaultDir=str(Path(__file__).parent),
+            style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT
+        ) as dlg:
+            if dlg.ShowModal() == wx.ID_CANCEL:
+                return
+
+            path = dlg.GetPath()
+            if not path.endswith(".session.json"):
+                path += ".session.json"
+
+        # Build session state
+        session = {
+            "shot1_path": str(self.shot1.path) if self.shot1 else None,
+            "shot2_path": str(self.shot2.path) if self.shot2 else None,
+            "shot1_settings": self.shot1_settings,
+            "shot2_settings": self.shot2_settings,
+            "compare_mode": self.compare_cb.GetValue(),
+            "field_checkboxes": {key: cb.GetValue() for key, cb in self.field_checkboxes.items()},
+            "field_secondary": {key: cb.GetValue() for key, cb in self.field_secondary.items()},
+            "field_styles": self.field_styles,
+        }
+
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(session, f, indent=2)
+            wx.MessageBox(f"Session saved to:\n{path}", "Save Session", wx.OK | wx.ICON_INFORMATION)
+        except Exception as e:
+            wx.MessageBox(f"Failed to save session:\n{e}", "Error", wx.OK | wx.ICON_ERROR)
+
+    def _load_session(self):
+        """Load session configuration from a JSON file."""
+        with wx.FileDialog(
+            self,
+            "Load Session",
+            wildcard="Session files (*.session.json)|*.session.json",
+            defaultDir=str(Path(__file__).parent),
+            style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST
+        ) as dlg:
+            if dlg.ShowModal() == wx.ID_CANCEL:
+                return
+
+            path = Path(dlg.GetPath())
+
+        try:
+            with path.open("r", encoding="utf-8") as f:
+                session = json.load(f)
+        except Exception as e:
+            wx.MessageBox(f"Failed to read session file:\n{e}", "Error", wx.OK | wx.ICON_ERROR)
+            return
+
+        # Load shot files
+        shot1_path = session.get("shot1_path")
+        if shot1_path and Path(shot1_path).exists():
+            try:
+                self.shot1 = ShotData(Path(shot1_path))
+                self.shot1_label.SetLabel(self.shot1.get_date_label())
+                self.btn_settings1.Enable(True)
+            except Exception as e:
+                wx.MessageBox(f"Failed to load shot 1:\n{e}", "Warning", wx.OK | wx.ICON_WARNING)
+                self.shot1 = None
+                self.shot1_label.SetLabel("(none)")
+                self.btn_settings1.Enable(False)
+        else:
+            self.shot1 = None
+            self.shot1_label.SetLabel("(none)")
+            self.btn_settings1.Enable(False)
+
+        shot2_path = session.get("shot2_path")
+        if shot2_path and Path(shot2_path).exists():
+            try:
+                self.shot2 = ShotData(Path(shot2_path))
+                self.shot2_label.SetLabel(self.shot2.get_date_label())
+                self.btn_settings2.Enable(True)
+            except Exception as e:
+                wx.MessageBox(f"Failed to load shot 2:\n{e}", "Warning", wx.OK | wx.ICON_WARNING)
+                self.shot2 = None
+                self.shot2_label.SetLabel("(none)")
+                self.btn_settings2.Enable(False)
+        else:
+            self.shot2 = None
+            self.shot2_label.SetLabel("(none)")
+            self.btn_settings2.Enable(False)
+
+        # Restore settings
+        self.shot1_settings = session.get("shot1_settings", {})
+        self.shot2_settings = session.get("shot2_settings", {})
+
+        # Restore compare mode
+        self.compare_cb.SetValue(session.get("compare_mode", False))
+
+        # Restore checkbox states
+        for key, value in session.get("field_checkboxes", {}).items():
+            if key in self.field_checkboxes:
+                self.field_checkboxes[key].SetValue(value)
+
+        for key, value in session.get("field_secondary", {}).items():
+            if key in self.field_secondary:
+                self.field_secondary[key].SetValue(value)
+
+        # Restore field styles
+        self.field_styles = session.get("field_styles", {})
+
+        # Update plot
+        self._update_plot()
 
 
 def main():
