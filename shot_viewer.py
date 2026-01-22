@@ -475,6 +475,9 @@ class ShotViewerFrame(wx.Frame):
         self.field_secondary: Dict[str, wx.CheckBox] = {}
         self.field_styles: Dict[str, Dict] = {}  # {key: {color, linestyle, linewidth}}
 
+        # Data for hover display
+        self.plot_data: Dict = {}  # Stores current plot data for hover lookup
+
         self._setup_ui()
         self._auto_load_json_files()
 
@@ -600,8 +603,21 @@ class ShotViewerFrame(wx.Frame):
         self.toolbar = NavigationToolbar(self.canvas)
         self.toolbar.Realize()
 
+        # Hover values panel
+        self.hover_panel = wx.Panel(right_panel)
+        self.hover_panel.SetBackgroundColour(wx.Colour(245, 245, 245))
+        hover_sizer = wx.BoxSizer(wx.VERTICAL)
+        self.hover_label = wx.StaticText(self.hover_panel, label="Hover over plot to see values")
+        self.hover_label.SetFont(wx.Font(9, wx.FONTFAMILY_TELETYPE, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
+        hover_sizer.Add(self.hover_label, 1, wx.EXPAND | wx.ALL, 5)
+        self.hover_panel.SetSizer(hover_sizer)
+
+        # Connect mouse motion event
+        self.canvas.mpl_connect('motion_notify_event', self._on_mouse_move)
+
         right_sizer.Add(self.toolbar, 0, wx.EXPAND)
         right_sizer.Add(self.canvas, 1, wx.EXPAND)
+        right_sizer.Add(self.hover_panel, 0, wx.EXPAND)
 
         right_panel.SetSizer(right_sizer)
 
@@ -861,12 +877,14 @@ class ShotViewerFrame(wx.Frame):
 
         if not self.shot1 and not self.shot2:
             self.ax.set_title("No data loaded")
+            self.plot_data = {}
             self.canvas.draw()
             return
 
         selected = self._get_selected_fields()
         if not selected:
             self.ax.set_title("No data series selected")
+            self.plot_data = {}
             self.canvas.draw()
             return
 
@@ -897,6 +915,18 @@ class ShotViewerFrame(wx.Frame):
             time1 = self.shot1.time_s[:trim1]
             time2 = self.shot2.time_s[:trim2]
 
+            # Store data for hover
+            self.plot_data = {
+                "compare": True,
+                "shot1_name": self.shot1.get_short_name(),
+                "shot2_name": self.shot2.get_short_name(),
+                "time1": time1,
+                "time2": time2,
+                "series1": {},
+                "series2": {},
+                "fields": []
+            }
+
             # Overlay mode: same field, different shots
             for i, (path, name, unit, is_secondary) in enumerate(selected):
                 key = ".".join(path)
@@ -920,6 +950,11 @@ class ShotViewerFrame(wx.Frame):
                 target_ax.plot(time2, series2, label=label2, color=color,
                                linewidth=linewidth, linestyle=ls2)
 
+                # Store for hover
+                self.plot_data["series1"][key] = series1
+                self.plot_data["series2"][key] = series2
+                self.plot_data["fields"].append((key, name, unit))
+
             self.ax.set_title(f"Comparison: {self.shot1.get_short_name()} vs {self.shot2.get_short_name()}")
         else:
             # Single shot mode
@@ -927,6 +962,14 @@ class ShotViewerFrame(wx.Frame):
             settings = self.shot1_settings if self.shot1 else self.shot2_settings
             trim_idx = get_trimmed_data(shot, settings)
             time_trimmed = shot.time_s[:trim_idx]
+
+            # Store data for hover
+            self.plot_data = {
+                "compare": False,
+                "time": time_trimmed,
+                "series": {},
+                "fields": []
+            }
 
             for i, (path, name, unit, is_secondary) in enumerate(selected):
                 key = ".".join(path)
@@ -940,6 +983,10 @@ class ShotViewerFrame(wx.Frame):
                 label = f"{name}" + (f" ({unit})" if unit else "") + (" [2nd]" if is_secondary else "")
                 target_ax.plot(time_trimmed, series, label=label, color=color,
                                linewidth=linewidth, linestyle=linestyle)
+
+                # Store for hover
+                self.plot_data["series"][key] = series
+                self.plot_data["fields"].append((key, name, unit))
 
             self.ax.set_title(shot.get_title())
 
@@ -970,6 +1017,59 @@ class ShotViewerFrame(wx.Frame):
         self.fig.tight_layout()
         self.fig.subplots_adjust(bottom=0.15 + 0.03 * ((len(all_lines) - 1) // ncol))
         self.canvas.draw()
+
+    def _on_mouse_move(self, event):
+        """Handle mouse movement over the plot to show values."""
+        if not event.inaxes or not self.plot_data:
+            self.hover_label.SetLabel("Hover over plot to see values")
+            return
+
+        x = event.xdata  # Time value
+        if x is None:
+            return
+
+        def find_nearest_idx(time_array, target):
+            """Find index of nearest time value."""
+            if not time_array:
+                return None
+            best_idx = 0
+            best_diff = abs(time_array[0] - target)
+            for i, t in enumerate(time_array):
+                diff = abs(t - target)
+                if diff < best_diff:
+                    best_diff = diff
+                    best_idx = i
+            return best_idx
+
+        def format_value(val, unit):
+            """Format a value with its unit."""
+            if val is None or (isinstance(val, float) and (val != val)):  # NaN check
+                return "N/A"
+            return f"{val:.2f} {unit}" if unit else f"{val:.2f}"
+
+        parts = [f"Time: {x:.2f}s"]
+
+        if self.plot_data.get("compare"):
+            # Compare mode: show values from both shots
+            idx1 = find_nearest_idx(self.plot_data["time1"], x)
+            idx2 = find_nearest_idx(self.plot_data["time2"], x)
+
+            for key, name, unit in self.plot_data["fields"]:
+                val1 = self.plot_data["series1"][key][idx1] if idx1 is not None and idx1 < len(self.plot_data["series1"][key]) else None
+                val2 = self.plot_data["series2"][key][idx2] if idx2 is not None and idx2 < len(self.plot_data["series2"][key]) else None
+                s1_name = self.plot_data["shot1_name"]
+                s2_name = self.plot_data["shot2_name"]
+                parts.append(f"{name}: {format_value(val1, unit)} ({s1_name}) | {format_value(val2, unit)} ({s2_name})")
+        else:
+            # Single shot mode
+            idx = find_nearest_idx(self.plot_data["time"], x)
+            if idx is not None:
+                for key, name, unit in self.plot_data["fields"]:
+                    series = self.plot_data["series"][key]
+                    val = series[idx] if idx < len(series) else None
+                    parts.append(f"{name}: {format_value(val, unit)}")
+
+        self.hover_label.SetLabel("  |  ".join(parts))
 
     def _export_png(self):
         """Export current plot to PNG."""
