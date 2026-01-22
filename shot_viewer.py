@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import wx
+import wx.html
 import wx.lib.scrolledpanel as scrolled
 
 import matplotlib
@@ -603,21 +604,18 @@ class ShotViewerFrame(wx.Frame):
         self.toolbar = NavigationToolbar(self.canvas)
         self.toolbar.Realize()
 
-        # Hover values panel
-        self.hover_panel = wx.Panel(right_panel)
-        self.hover_panel.SetBackgroundColour(wx.Colour(245, 245, 245))
-        hover_sizer = wx.BoxSizer(wx.VERTICAL)
-        self.hover_label = wx.StaticText(self.hover_panel, label="Hover over plot to see values")
-        self.hover_label.SetFont(wx.Font(9, wx.FONTFAMILY_TELETYPE, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
-        hover_sizer.Add(self.hover_label, 1, wx.EXPAND | wx.ALL, 5)
-        self.hover_panel.SetSizer(hover_sizer)
+        # Hover values panel (using HtmlWindow for colored squares)
+        self.hover_html = wx.html.HtmlWindow(right_panel, size=(-1, 80),
+                                              style=wx.html.HW_SCROLLBAR_AUTO | wx.BORDER_SIMPLE)
+        self.hover_html.SetBackgroundColour(wx.Colour(250, 250, 250))
+        self._set_hover_html("<span style='color: #666;'>Hover over plot to see values</span>")
 
         # Connect mouse motion event
         self.canvas.mpl_connect('motion_notify_event', self._on_mouse_move)
 
         right_sizer.Add(self.toolbar, 0, wx.EXPAND)
         right_sizer.Add(self.canvas, 1, wx.EXPAND)
-        right_sizer.Add(self.hover_panel, 0, wx.EXPAND)
+        right_sizer.Add(self.hover_html, 0, wx.EXPAND)
 
         right_panel.SetSizer(right_sizer)
 
@@ -950,10 +948,15 @@ class ShotViewerFrame(wx.Frame):
                 target_ax.plot(time2, series2, label=label2, color=color,
                                linewidth=linewidth, linestyle=ls2)
 
-                # Store for hover
+                # Store for hover (include color for display)
+                # Convert matplotlib color to hex
+                if isinstance(color, tuple):
+                    hex_color = '#%02x%02x%02x' % tuple(int(c * 255) for c in color[:3])
+                else:
+                    hex_color = color
                 self.plot_data["series1"][key] = series1
                 self.plot_data["series2"][key] = series2
-                self.plot_data["fields"].append((key, name, unit))
+                self.plot_data["fields"].append((key, name, unit, hex_color))
 
             self.ax.set_title(f"Comparison: {self.shot1.get_short_name()} vs {self.shot2.get_short_name()}")
         else:
@@ -984,9 +987,13 @@ class ShotViewerFrame(wx.Frame):
                 target_ax.plot(time_trimmed, series, label=label, color=color,
                                linewidth=linewidth, linestyle=linestyle)
 
-                # Store for hover
+                # Store for hover (include color for display)
+                if isinstance(color, tuple):
+                    hex_color = '#%02x%02x%02x' % tuple(int(c * 255) for c in color[:3])
+                else:
+                    hex_color = color
                 self.plot_data["series"][key] = series
-                self.plot_data["fields"].append((key, name, unit))
+                self.plot_data["fields"].append((key, name, unit, hex_color))
 
             self.ax.set_title(shot.get_title())
 
@@ -1018,10 +1025,19 @@ class ShotViewerFrame(wx.Frame):
         self.fig.subplots_adjust(bottom=0.15 + 0.03 * ((len(all_lines) - 1) // ncol))
         self.canvas.draw()
 
+    def _set_hover_html(self, content):
+        """Set HTML content in the hover panel."""
+        html = f"""
+        <html><body style="background-color: #fafafa; margin: 5px;">
+        <font size="3" face="Arial, sans-serif">{content}</font>
+        </body></html>
+        """
+        self.hover_html.SetPage(html)
+
     def _on_mouse_move(self, event):
         """Handle mouse movement over the plot to show values."""
         if not event.inaxes or not self.plot_data:
-            self.hover_label.SetLabel("Hover over plot to see values")
+            self._set_hover_html("<span style='color: #666;'>Hover over plot to see values</span>")
             return
 
         x = event.xdata  # Time value
@@ -1047,29 +1063,37 @@ class ShotViewerFrame(wx.Frame):
                 return "N/A"
             return f"{val:.2f} {unit}" if unit else f"{val:.2f}"
 
-        parts = [f"Time: {x:.2f}s"]
+        def color_square(hex_color):
+            """Create an HTML colored square."""
+            return f'<span style="background-color: {hex_color}; color: {hex_color}; border: 1px solid #333;">\u2588\u2588</span>'
+
+        # Build HTML content
+        lines = [f"<b>Time: {x:.2f}s</b>"]
 
         if self.plot_data.get("compare"):
             # Compare mode: show values from both shots
             idx1 = find_nearest_idx(self.plot_data["time1"], x)
             idx2 = find_nearest_idx(self.plot_data["time2"], x)
+            s1_name = self.plot_data["shot1_name"]
+            s2_name = self.plot_data["shot2_name"]
 
-            for key, name, unit in self.plot_data["fields"]:
+            for key, name, unit, hex_color in self.plot_data["fields"]:
                 val1 = self.plot_data["series1"][key][idx1] if idx1 is not None and idx1 < len(self.plot_data["series1"][key]) else None
                 val2 = self.plot_data["series2"][key][idx2] if idx2 is not None and idx2 < len(self.plot_data["series2"][key]) else None
-                s1_name = self.plot_data["shot1_name"]
-                s2_name = self.plot_data["shot2_name"]
-                parts.append(f"{name}: {format_value(val1, unit)} ({s1_name}) | {format_value(val2, unit)} ({s2_name})")
+                lines.append(
+                    f"{color_square(hex_color)} <b>{name}:</b> "
+                    f"{format_value(val1, unit)} ({s1_name}) | {format_value(val2, unit)} ({s2_name})"
+                )
         else:
             # Single shot mode
             idx = find_nearest_idx(self.plot_data["time"], x)
             if idx is not None:
-                for key, name, unit in self.plot_data["fields"]:
+                for key, name, unit, hex_color in self.plot_data["fields"]:
                     series = self.plot_data["series"][key]
                     val = series[idx] if idx < len(series) else None
-                    parts.append(f"{name}: {format_value(val, unit)}")
+                    lines.append(f"{color_square(hex_color)} <b>{name}:</b> {format_value(val, unit)}")
 
-        self.hover_label.SetLabel("  |  ".join(parts))
+        self._set_hover_html("<br>".join(lines))
 
     def _export_png(self):
         """Export current plot to PNG."""
